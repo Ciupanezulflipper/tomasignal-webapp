@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>TomaSignal — WebApp</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">📊 TomaSignal</div>
+      <button id="btnTheme" class="ghost">Toggle theme</button>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="news">News</button>
+      <button class="tab" data-tab="commodities">Commodities</button>
+      <button class="tab" data-tab="pairs">Pairs</button>
+    </nav>
+
+    <main>
+      <section id="tab-news" class="tabpage active">
+        <div class="section-head">
+          <h2>Latest Headlines</h2>
+          <small>Starter: static links; we’ll wire live feeds next.</small>
+        </div>
+        <div class="cards">
+          <a class="card" target="_blank" href="https://www.reuters.com/markets/">
+            <h3>Reuters: Markets</h3>
+            <p>Open Reuters Markets feed.</p>
+          </a>
+          <a class="card" target="_blank" href="https://www.ft.com/">
+            <h3>Financial Times</h3>
+            <p>Open FT homepage (RSS will be added later).</p>
+          </a>
+          <a class="card" target="_blank" href="https://www.marketwatch.com/">
+            <h3>MarketWatch Top</h3>
+            <p>MarketWatch top stories.</p>
+          </a>
+          <a class="card" target="_blank" href="https://www.cnbc.com/world/?region=world">
+            <h3>CNBC Top News</h3>
+            <p>CNBC world headlines.</p>
+          </a>
+        </div>
+      </section>
+
+      <section id="tab-commodities" class="tabpage">
+        <div class="section-head">
+          <h2>Commodities</h2>
+          <small>Quick links now; live quotes later.</small>
+        </div>
+        <div class="cards">
+          <a class="card" target="_blank" href="https://www.investing.com/commodities/gold">
+            <h3>🪙 Gold (XAU)</h3>
+            <p>Investing.com gold overview</p>
+          </a>
+          <a class="card" target="_blank" href="https://www.investing.com/commodities/silver">
+            <h3>🥈 Silver (XAG)</h3>
+            <p>Investing.com silver overview</p>
+          </a>
+          <a class="card" target="_blank" href="https://www.investing.com/commodities/crude-oil">
+            <h3>🛢️ WTI Crude</h3>
+            <p>Investing.com crude oil overview</p>
+          </a>
+        </div>
+      </section>
+
+      <section id="tab-pairs" class="tabpage">
+        <div class="section-head">
+          <h2>Pairs</h2>
+          <small>Open pair pages; we’ll add live signals next.</small>
+        </div>
+        <div class="cards">
+          <a class="card" target="_blank" href="https://www.investing.com/currencies/eur-usd">
+            <h3>EUR/USD</h3>
+            <p>Overview on Investing.com</p>
+          </a>
+          <a class="card" target="_blank" href="https://www.investing.com/currencies/gbp-usd">
+            <h3>GBP/USD</h3>
+            <p>Overview on Investing.com</p>
+          </a>
+          <a class="card" target="_blank" href="https://www.investing.com/currencies/usd-jpy">
+            <h3>USD/JPY</h3>
+            <p>Overview on Investing.com</p>
+          </a>
+          <a class="card" target="_blank" href="https://www.investing.com/currencies/xau-usd">
+            <h3>XAU/USD</h3>
+            <p>Gold vs USD</p>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="bottombar">
+      <button id="btnSend" class="primary">Send “Hello” to bot</button>
+    </footer>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
