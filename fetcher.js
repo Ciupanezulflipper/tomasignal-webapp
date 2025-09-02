@@ -1,90 +1,96 @@
-// fetcher.js — runs in GitHub Actions (Node 18) and writes static JSON to ./dist/data
-const fs = require("fs/promises");
+// fetcher.js — pulls data from API and saves into dist/data/*.json
 
-async function fetchJSON(url, opts = {}) {
-  const res = await fetch(url, opts);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.json();
+const fs = require("fs");
+const path = require("path");
+const https = require("https");
+
+const apiKey = process.env.TWELVE_DATA_API_KEY;
+if (!apiKey) {
+  console.error("❌ Missing API key in secrets");
+  process.exit(1);
+}
+
+function fetchJSON(url) {
+  return new Promise((resolve, reject) => {
+    https
+      .get(url, (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      })
+      .on("error", reject);
+  });
 }
 
 async function fetchCommodities() {
-  const apiKey = process.env.TWELVE_DATA_API_KEY;
-  if (!apiKey) throw new Error("Missing TWELVE_DATA_API_KEY");
-
-  const base = "https://api.twelvedata.com/quote?symbol=";
-
-  async function tdQuote(symbol) {
-    const data = await fetchJSON(`${base}${encodeURIComponent(symbol)}&apikey=${apiKey}`);
-    if (data && data.symbol && data.price) return data;
-    throw new Error(`No quote for ${symbol}`);
-  }
-
-  // Metals (reliable on TwelveData)
-  const xau = await tdQuote("XAU/USD").catch(() => null);
-  const xag = await tdQuote("XAG/USD").catch(() => null);
-
-  // Oil: try a few common symbols and keep the first that works
-  const oilCandidates = ["WTI/USD", "CL", "CL=F", "WTICOUSD", "USO"];
-  let oil = null, oilSymbol = null;
-  for (const s of oilCandidates) {
-    try { oil = await tdQuote(s); oilSymbol = s; break; } catch { /* try next */ }
-  }
-
-  return {
-    generated_at: new Date().toISOString(),
-    commodities: {
-      XAUUSD: xau ? {
-        price: Number(xau.price),
-        percent_change: xau.percent_change ? Number(xau.percent_change) : null,
-        prev_close: xau.previous_close ? Number(xau.previous_close) : null
-      } : null,
-      XAGUSD: xag ? {
-        price: Number(xag.price),
-        percent_change: xag.percent_change ? Number(xag.percent_change) : null,
-        prev_close: xag.previous_close ? Number(xag.previous_close) : null
-      } : null,
-      OIL: oil ? {
-        price: Number(oil.price),
-        symbol_used: oilSymbol
-      } : null
+  const symbols = ["XAU/USD", "XAG/USD", "OIL"];
+  const commodities = {};
+  for (const s of symbols) {
+    const url = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(
+      s
+    )}&apikey=${apiKey}`;
+    try {
+      const json = await fetchJSON(url);
+      if (json && json.price) {
+        commodities[s.replace("/", "")] = { price: Number(json.price) };
+      } else {
+        console.warn(`⚠️ No data for ${s}`, json);
+      }
+    } catch (e) {
+      console.warn(`⚠️ Error fetching ${s}`, e.message);
     }
-  };
+  }
+  return commodities;
 }
 
 async function fetchPairs() {
-  // Free, no key needed
-  const url = "https://api.exchangerate.host/latest?base=USD&symbols=EUR,GBP,JPY,CHF,CAD,AUD";
-  const data = await fetchJSON(url);
-  const r = data.rates;
-
-  // Convert to requested market notation
-  const pairs = {
-    "EUR/USD": r.EUR ? 1 / r.EUR : null,   // base=USD -> USD→EUR, invert to EUR→USD
-    "GBP/USD": r.GBP ? 1 / r.GBP : null,
-    "USD/JPY": r.JPY ?? null,
-    "USD/CHF": r.CHF ?? null,
-    "AUD/USD": r.AUD ? 1 / r.AUD : null,
-    "USD/CAD": r.CAD ?? null
-  };
-
-  return {
-    generated_at: new Date().toISOString(),
-    pairs
-  };
+  const pairs = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD", "USD/CAD"];
+  const fx = {};
+  for (const p of pairs) {
+    const url = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(
+      p
+    )}&apikey=${apiKey}`;
+    try {
+      const json = await fetchJSON(url);
+      if (json && json.price) {
+        fx[p] = Number(json.price);
+      } else {
+        console.warn(`⚠️ No data for ${p}`, json);
+      }
+    } catch (e) {
+      console.warn(`⚠️ Error fetching ${p}`, e.message);
+    }
+  }
+  return fx;
 }
 
 async function main() {
-  await fs.mkdir("./dist/data", { recursive: true });
+  const commodities = await fetchCommodities();
+  const pairs = await fetchPairs();
+  const generated_at = new Date().toISOString();
 
-  const [commodities, fx] = await Promise.all([
-    fetchCommodities(),
-    fetchPairs()
-  ]);
+  const distDir = path.join(__dirname, "dist", "data");
+  fs.mkdirSync(distDir, { recursive: true });
 
-  await fs.writeFile("./dist/data/commodities.json", JSON.stringify(commodities, null, 2));
-  await fs.writeFile("./dist/data/pairs.json", JSON.stringify(fx, null, 2));
+  fs.writeFileSync(
+    path.join(distDir, "commodities.json"),
+    JSON.stringify({ commodities, generated_at }, null, 2)
+  );
+  fs.writeFileSync(
+    path.join(distDir, "pairs.json"),
+    JSON.stringify({ pairs, generated_at }, null, 2)
+  );
 
-  console.log("Wrote: dist/data/commodities.json, dist/data/pairs.json");
+  console.log("✅ Data written into dist/data/");
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch((err) => {
+  console.error("❌ Fatal error", err);
+  process.exit(1);
+});
