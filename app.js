@@ -1,180 +1,136 @@
-// ---------- Theme ----------
-const root = document.documentElement;
-const themeToggle = document.getElementById('themeToggle');
-const savedTheme = localStorage.getItem('theme');
-if (savedTheme === 'light') root.classList.add('light');
-themeToggle.addEventListener('click', () => {
-  root.classList.toggle('light');
-  localStorage.setItem('theme', root.classList.contains('light') ? 'light' : 'dark');
+// app.js — UI logic for tabs + loading data from local JSON files built by GitHub Actions
+
+/* ========== Tabs ========== */
+function selectTab(tab) {
+  document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+  document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
+  document.querySelector(`.tab[data-tab="${tab}"]`)?.classList.add("active");
+  document.getElementById(tab)?.classList.add("active");
+}
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".tab");
+  if (!btn) return;
+  const t = btn.getAttribute("data-tab");
+  selectTab(t);
+  if (t === "commodities") loadCommodities();
+  if (t === "pairs") loadPairs();
 });
 
-// ---------- Tabs ----------
-const tabs = [...document.querySelectorAll('.tab')];
-const panels = [...document.querySelectorAll('.tab-panel')];
-tabs.forEach(btn => {
-  btn.addEventListener('click', () => {
-    tabs.forEach(b => b.classList.remove('active'));
-    panels.forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById(btn.dataset.tab).classList.add('active');
+/* ========== Theme toggle ========== */
+const themeToggle = document.getElementById("themeToggle");
+if (themeToggle) {
+  themeToggle.addEventListener("click", () => {
+    document.documentElement.classList.toggle("dark");
   });
-});
+}
 
-// ---------- Helpers ----------
-const fmt = {
-  price: (n, dp=2) => {
-    if (n == null || isNaN(n)) return '—';
-    return Number(n).toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
+/* ========== Utilities ========== */
+function fmtPrice(v) {
+  if (v == null || Number.isNaN(v)) return "—";
+  const n = Number(v);
+  if (n >= 100) return n.toFixed(2);
+  if (n >= 10) return n.toFixed(3);
+  return n.toFixed(4);
+}
+function fmtFx(v) {
+  if (v == null || Number.isNaN(v)) return "—";
+  const n = Number(v);
+  // broader ranges for majors
+  if (n >= 100) return n.toFixed(2);     // e.g., USD/JPY
+  if (n >= 10) return n.toFixed(3);
+  return n.toFixed(5);                   // e.g., EUR/USD ~1.09
+}
+function colorize(el, delta) {
+  if (!el) return;
+  el.classList.remove("up", "down");
+  if (delta > 0) el.classList.add("up");
+  else if (delta < 0) el.classList.add("down");
+}
+async function fetchLocalJSON(path) {
+  const url = `${path}?ts=${Date.now()}`; // cache-bust
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} on ${path}`);
+  return res.json();
+}
+
+/* ========== Commodities ========== */
+function fillMetric(id, obj) {
+  const root = document.getElementById(id);
+  if (!root) return;
+  const valEl = root.querySelector('[data-field="price"]');
+  const chgEl = root.querySelector('[data-field="change"]');
+
+  if (!obj) {
+    valEl.textContent = "—";
+    if (chgEl) chgEl.textContent = "";
+    root.classList.remove("up", "down");
+    return;
   }
-};
 
-const setStatus = (elId, text) => { const e=document.getElementById(elId); if(e) e.textContent=text; };
+  let change = null;
+  if (typeof obj.percent_change === "number") change = obj.percent_change;
+  else if (typeof obj.change === "number") change = obj.change;
 
-// Simple fetch with timeout + graceful error
-async function fetchJSON(url, timeoutMs = 12000) {
-  const ctrl = new AbortController();
-  const id = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { signal: ctrl.signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } finally { clearTimeout(id); }
-}
-
-// ---------- Commodities (Gold, Silver, Oil) ----------
-const elXAU = document.querySelector('#xau [data-field="price"]');
-const elXAG = document.querySelector('#xag [data-field="price"]');
-const elOIL = document.querySelector('#oil [data-field="price"]');
-const elOilSrc = document.getElementById('oilSource');
-
-async function getXauUsd() {
-  // exchangerate.host supports metals (XAU/XAG) -> currency
-  // 1 XAU in USD
-  const j = await fetchJSON('https://api.exchangerate.host/convert?from=XAU&to=USD');
-  return j?.info?.rate || j?.result;
-}
-async function getXagUsd() {
-  const j = await fetchJSON('https://api.exchangerate.host/convert?from=XAG&to=USD');
-  return j?.info?.rate || j?.result;
-}
-
-async function getOilUsd() {
-  // Try Brent first (XBR->USD). If missing, try WTI (XTI->USD).
-  // Some providers expose these as commodities-like codes.
-  try {
-    const br = await fetchJSON('https://api.exchangerate.host/convert?from=XBR&to=USD');
-    if (br?.info?.rate || br?.result) {
-      elOilSrc.textContent = 'Brent (XBR/USD)';
-      return br.info?.rate || br.result;
-    }
-  } catch (_) {}
-
-  try {
-    const wti = await fetchJSON('https://api.exchangerate.host/convert?from=XTI&to=USD');
-    if (wti?.info?.rate || wti?.result) {
-      elOilSrc.textContent = 'WTI (XTI/USD)';
-      return wti.info?.rate || wti.result;
-    }
-  } catch (_) {}
-
-  // Fallback via Stooq CSV through a CORS proxy (best-effort)
-  // WTI = CL.F, Brent = BR.F (end-of-day-ish)
-  async function stooq(symbol) {
-    const url = `https://stooq.com/q/l/?s=${symbol}&f=sd2t2ohlcv&h&e=csv`;
-    const prox = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-    const txt = await (await fetch(prox)).text();
-    // CSV header: Symbol,Date,Time,Open,High,Low,Close,Volume
-    const line = txt.trim().split('\n')[1];
-    const parts = line.split(',');
-    const close = parseFloat(parts[6]);
-    return isFinite(close) ? close : null;
+  valEl.textContent = fmtPrice(obj.price);
+  if (chgEl) {
+    const sign = change > 0 ? "+" : "";
+    const unit = (typeof obj.percent_change === "number") ? "%" : "";
+    chgEl.textContent = change == null ? "" : `(${sign}${change}${unit})`;
   }
-  try {
-    const v = await stooq('cl.f');
-    if (v) { elOilSrc.textContent = 'WTI (Stooq CL.F)'; return v; }
-  } catch (_) {}
-  try {
-    const v = await stooq('br.f');
-    if (v) { elOilSrc.textContent = 'Brent (Stooq BR.F)'; return v; }
-  } catch (_) {}
-
-  elOilSrc.textContent = 'Oil (unavailable)';
-  return null;
+  colorize(root, change);
 }
 
 async function loadCommodities() {
-  setStatus('commoditiesStatus', 'updating…');
+  const status = document.getElementById("commoditiesStatus");
   try {
-    const [xau, xag, oil] = await Promise.allSettled([getXauUsd(), getXagUsd(), getOilUsd()]);
-    elXAU.textContent = fmt.price(xau.value, 2);
-    elXAG.textContent = fmt.price(xag.value, 3);
-    elOIL.textContent = fmt.price(oil.value, 2);
-    setStatus('commoditiesStatus', 'live • 60s refresh');
-  } catch (err) {
-    setStatus('commoditiesStatus', 'error');
-    console.error('Commodities error:', err);
+    if (status) status.textContent = "updating…";
+    const data = await fetchLocalJSON("./data/commodities.json");
+    fillMetric("xau", data.commodities?.XAUUSD || null);
+    fillMetric("xag", data.commodities?.XAGUSD || null);
+    fillMetric("oil", data.commodities?.OIL || null);
+    if (status) status.textContent = `updated ${new Date(data.generated_at).toLocaleTimeString()}`;
+  } catch (e) {
+    console.error(e);
+    if (status) status.textContent = "error";
   }
 }
 
-// ---------- Forex Pairs ----------
-const pairs = [
-  { name: 'EUR/USD', base:'EUR', quote:'USD' },
-  { name: 'GBP/USD', base:'GBP', quote:'USD' },
-  { name: 'USD/JPY', base:'USD', quote:'JPY' },
-  { name: 'USD/CHF', base:'USD', quote:'CHF' },
-  { name: 'AUD/USD', base:'AUD', quote:'USD' },
-  { name: 'USD/CAD', base:'USD', quote:'CAD' },
-  { name: 'NZD/USD', base:'NZD', quote:'USD' },
-  { name: 'EUR/GBP', base:'EUR', quote:'GBP' },
-  { name: 'EUR/JPY', base:'EUR', quote:'JPY' },
-  { name: 'GBP/JPY', base:'GBP', quote:'JPY' }
-];
-
-const pairsGrid = document.getElementById('pairsGrid');
-
-function pairCard(id, title){
-  const div = document.createElement('div');
-  div.className = 'card metric';
-  div.id = id;
-  div.innerHTML = `
-    <div class="metric-head"><span class="metric-name">${title}</span></div>
-    <div class="metric-body">
-      <div class="metric-value" data-field="price">—</div>
-      <div class="metric-sub">mid price</div>
-    </div>`;
-  return div;
+/* ========== FX Pairs ========== */
+function fillPair(id, rate) {
+  const root = document.getElementById(id);
+  if (!root) return;
+  const valEl = root.querySelector('[data-field="price"]');
+  valEl.textContent = fmtFx(rate);
 }
-
-pairs.forEach(p => pairsGrid.appendChild(pairCard(`pair-${p.base}${p.quote}`, p.name)));
-
-async function fetchPair(base, quote){
-  // https://api.exchangerate.host/convert?from=EUR&to=USD
-  const j = await fetchJSON(`https://api.exchangerate.host/convert?from=${base}&to=${quote}`);
-  return j?.info?.rate || j?.result || null;
-}
-
-async function loadPairs(){
-  setStatus('pairsStatus', 'updating…');
+async function loadPairs() {
+  const status = document.getElementById("pairsStatus");
   try {
-    const out = await Promise.allSettled(pairs.map(p => fetchPair(p.base, p.quote)));
-    out.forEach((r, i) => {
-      const p = pairs[i];
-      const el = document.querySelector(`#pair-${p.base}${p.quote} [data-field="price"]`);
-      const dp = (p.quote === 'JPY') ? 3 : 5;
-      el.textContent = fmt.price(r.value, dp);
-    });
-    setStatus('pairsStatus', 'live • 60s refresh');
-  } catch (err){
-    setStatus('pairsStatus', 'error');
-    console.error('Pairs error:', err);
+    if (status) status.textContent = "updating…";
+    const data = await fetchLocalJSON("./data/pairs.json");
+    fillPair("eurusd", data.pairs?.["EUR/USD"] ?? null);
+    fillPair("gbpusd", data.pairs?.["GBP/USD"] ?? null);
+    fillPair("usdjpy", data.pairs?.["USD/JPY"] ?? null);
+    fillPair("usdchf", data.pairs?.["USD/CHF"] ?? null);
+    fillPair("audusd", data.pairs?.["AUD/USD"] ?? null);
+    fillPair("usdcad", data.pairs?.["USD/CAD"] ?? null);
+    if (status) status.textContent = `updated ${new Date(data.generated_at).toLocaleTimeString()}`;
+  } catch (e) {
+    console.error(e);
+    if (status) status.textContent = "error";
   }
 }
 
-// ---------- Start + Auto Refresh ----------
-function start(){
-  loadCommodities();
-  loadPairs();
-  setInterval(loadCommodities, 60_000);
-  setInterval(loadPairs, 60_000);
-}
-document.addEventListener('DOMContentLoaded', start);
+/* ========== Init ========== */
+document.addEventListener("DOMContentLoaded", () => {
+  // default to News tab visible; nothing to load yet
+  // prefetch data quietly, so switching tabs feels instant
+  loadCommodities().catch(() => {});
+  loadPairs().catch(() => {});
+
+  // periodic refresh (page pulls new JSON; GitHub Actions also refreshes every ~10m)
+  setInterval(() => {
+    const active = document.querySelector(".tab.active")?.getAttribute("data-tab");
+    if (active === "commodities") loadCommodities();
+    if (active === "pairs") loadPairs();
+  }, 60_000);
+});
